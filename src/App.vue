@@ -1,232 +1,114 @@
 <template>
-  <div id="app">
-    <div>
-      <h1>Vue Webauthn demo</h1>
-      <div>
-        <div>
-          <label>
-            UserVerifyingPlatformAuthenticatorAvailable:
-            <span
-              class="status"
-            >{{ checkAuthenticatorAvailable }}</span>
-          </label>
-        </div>
-        <div>
-          <label>
-            Username
-            <input v-model="inputData.username" />
-          </label>
-        </div>
-        <div>
-          <label>
-            Email
-            <input v-model="inputData.emailAddress" />
-          </label>
-        </div>
-        <div hidden>
-          <label>
-            RP Name
-            <input v-model="inputData.relyingParty.name" />
-          </label>
-        </div>
-        <div hidden>
-          <label>
-            RP ID
-            <input disabled v-model="inputData.relyingParty.id" />
-          </label>
-        </div>
-        <div hidden>
-          <label>
-            Attestation
-            <select v-model="inputData.attestation">
-              <option value="none">none (No data obtained from device)</option>
-              <option value="indirect">indirect (Generic certificate)</option>
-              <option value="direct">direct (All data)</option>
-            </select>
-          </label>
-        </div>
-        <div hidden>
-          <label>
-            Attachment
-            <select v-model="inputData.attachment">
-              <option value="any">Any</option>
-              <option value="platform">Platform (e.g. TouchID)</option>
-              <option value="cross-platform">Cross-platform</option>
-            </select>
-          </label>
-        </div>
-
-        <hr />
-        <button v-if="inputData.username && inputData.emailAddress" @click="register">Register</button>
+  <v-app>
+    <v-app-bar app color="primary" dark>
+      <div class="d-flex align-center">
+        <v-img
+          alt="Vuetify Logo"
+          class="shrink mr-2"
+          contain
+          src="https://cdn.vuetifyjs.com/images/logos/vuetify-logo-dark.png"
+          transition="scale-transition"
+          width="40"
+        />
       </div>
 
-      <div v-if="userDetails">
-        <button @click="authenticate">Sign in</button>
-      </div>
+      <v-spacer></v-spacer>
 
-      <div class="output">
-        <pre v-if="formattedUserDetails"><code>{{ formattedUserDetails }}</code></pre>
-        <pre v-if="formattedSavedCred"><!--
-				--><span>// send this to server to verify and enroll the key</span>
-<!--			--><code>{{ formattedSavedCred }}</code>
-			</pre>
-        <pre v-if="formattedAssertion"><!--
-				--><span>// send this to server to verify a sign-in</span>
-<!--			--><code>{{ formattedAssertion }}</code>
-			</pre>
+      <v-btn href="#" text>
+        <span class="mr-2">Web Authen Demo</span>
+      </v-btn>
+    </v-app-bar>
+
+    <v-main v-if="!isLogin">
+      <div v-if="!checkAuthenticatorAvailable">
+        <v-alert dense outlined type="error">browser ของคุณไม่รองรับ Login Touch ID</v-alert>
       </div>
-    </div>
-  </div>
+      <div v-if="isLoginFail">
+        <v-alert dense outlined type="error">ข้อมูลผู้ใช้งานไม่ถูกต้อง</v-alert>
+      </div>
+      <v-alert v-if="registerData" type="success" text>ลงทะเบียนสำเร็จ</v-alert>
+      <RegisterComponent v-if="page == 'register'" :callback-register="callbackRegister" />
+      <LoginComponent
+        v-else
+        :callback-login="callbackLogin"
+        :return-to-register="returnToRegister"
+        :saved-cred="registerData.savedCred"
+      />
+    </v-main>
+    <v-main v-else>
+      <br />
+      <v-alert v-if="registerData" type="success" text>
+        Welcame:
+        <strong>{{ registerData.userDetails.displayName }}</strong>
+      </v-alert>
+    </v-main>
+  </v-app>
 </template>
 
 <script>
-import * as defaults from "./defaults";
-import {
-  generateId,
-  generateChallenge,
-  ab2hex,
-  decodeCredential,
-  decodeAssertion,
-} from "./helpers";
+// import HelloWorld from "./components/HelloWorld";
+import RegisterComponent from "./components/RegisterComponent";
+import LoginComponent from "./components/LoginComponent";
 
 export default {
   name: "App",
-  components: {},
-  data() {
-    return {
-      inputData: {
-        username: "Luke Skywalker",
-        emailAddress: "luke.skywalker@alderaan.net",
-        relyingParty: {
-          name: "Falcon Transportation Services",
-          id: "fwd-line-app.web.app",
-        },
-        attachment: "platform",
-        attestation: "none",
-      },
-      userDetails: null,
-      savedCred: null,
-      assertion: null,
-      checkAuthenticatorAvailable: false,
-    };
+  components: {
+    RegisterComponent,
+    LoginComponent,
   },
-  computed: {
-    formattedUserDetails() {
-      if (!this.userDetails) return null;
-      return {
-        ...this.userDetails,
-        id: ab2hex(this.userDetails.id),
-      };
-    },
-    formattedSavedCred() {
-      if (!this.savedCred) return null;
-      return decodeCredential(this.savedCred);
-    },
-    formattedAssertion() {
-      if (!this.assertion) return null;
-      return decodeAssertion(this.assertion);
-    },
-  },
+
+  data: () => ({
+    page: "register",
+    registerData: null,
+    loginData: null,
+    isLogin: false,
+    checkAuthenticatorAvailable: true,
+    isLoginFail: false,
+  }),
   methods: {
-    async register() {
-      const publicKey = {
-        rp: this.inputData.relyingParty,
-        pubKeyCredParams: defaults.pubKeyCredParams,
-        timeout: 60 * 1000,
-
-        attestation: this.inputData.attestation,
-
-        // This would allow restricting devices to e.g. touchid or u2f key but it doesn't work consistently at the moment (2019-01-20)
-        authenticatorSelection:
-          this.inputData.attachment === "any"
-            ? undefined
-            : {
-                ...defaults.authenticatorSelection,
-                authenticatorAttachment: this.inputData.attachment,
-              },
-
-        // cryptographic challenge from server
-        challenge: generateChallenge(),
-
-        // user details from server post account creation
-        user: {
-          id: generateId(),
-          name: this.inputData.emailAddress,
-          displayName: this.inputData.username,
-        },
-      };
-
-      console.log({ publicKey });
-
-      // register / create a new credential
-      try {
-        const cred = await navigator.credentials.create({ publicKey });
-        this.savedCred = cred;
-        this.userDetails = publicKey.user;
-        console.log(`Credential obtained`, this.savedCred);
-      } catch (e) {
-        console.error(e.message);
+    callbackRegister(response) {
+      console.log("registerData", response);
+      this.registerData = response;
+      this.page = "login";
+    },
+    callbackLogin(response) {
+      console.log("loginData", response);
+      this.loginData = response.assertion;
+      if (
+        this.loginData.id == this.registerData.savedCred.id &&
+        response.username == this.registerData.userDetails.displayName
+      ) {
+        this.isLogin = true;
+        this.isLoginFail = false;
+      } else {
+        this.isLoginFail = true;
+        this.isLogin = false;
       }
     },
-    async authenticate() {
-      if (!this.savedCred) {
-        alert("You must register first");
-        return;
-      }
-
-      const publicKey = {
-        rp: this.inputData.relyingParty,
-        pubKeyCredParams: defaults.pubKeyCredParams,
-        attestation: defaults.attestation,
-        timeout: 60 * 1000,
-
-        // cryptographic challenge from server
-        challenge: generateChallenge(),
-
-        allowCredentials: [
-          {
-            // user's credential id and settings from server
-            id: this.savedCred.rawId,
-            // transports: defaults.transports,
-            type: defaults.credentialType,
-          },
-        ],
-      };
-
-      console.log({ publicKey });
-
-      try {
-        const assertion = await navigator.credentials.get({ publicKey });
-        console.log(`Assertion obtained`, assertion);
-        this.assertion = assertion;
-      } catch (e) {
-        console.error(e.message);
-      }
+    returnToRegister() {
+      this.page = "register";
     },
   },
   async mounted() {
-    this.checkAuthenticatorAvailable = await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-    // console.log(this.checkAuthenticatorAvailable); // true or false
-    //
+    try {
+      this.checkAuthenticatorAvailable = await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+      console.log(this.checkAuthenticatorAvailable);
+    } catch (error) {
+      console.log(error);
+      this.checkAuthenticatorAvailable = false;
+    }
   },
 };
 </script>
-
 <style>
-#app {
-  font-family: "Source Code Pro", "Menlo", monospaced;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-align: center;
-  color: #2c3e50;
-  margin-top: 60px;
-}
-
 .output {
   width: 800px;
   display: inline-block;
   text-align: left;
   background: #eee;
   overflow-x: scroll;
+}
+.container.fill-height {
+  display: flow-root;
 }
 </style>
